@@ -1,286 +1,337 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import matplotlib.pyplot as plt
 import seaborn as sns
-from sklearn.linear_model import LinearRegression
-from sklearn.metrics import mean_squared_error
-from sklearn.cluster import KMeans
-from sklearn.preprocessing import StandardScaler
+import matplotlib.pyplot as plt
+from sklearn.model_selection import train_test_split
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.metrics import classification_report, confusion_matrix, accuracy_score
+from sklearn.preprocessing import LabelEncoder, StandardScaler # Import StandardScaler
 
-# ==========================================
-# 1. KONFIGURASI HALAMAN
-# ==========================================
+# --- KONFIGURASI HALAMAN ---
+# Menggunakan random_state yang konsisten (42) agar hasil reproducible
+GLOBAL_RANDOM_STATE = 42
+
 st.set_page_config(
-    page_title="Coffee Shop Analytics Dashboard",
+    page_title="UAS Sains Data - Coffee Shop Analytics",
     page_icon="☕",
-    layout="wide",
-    initial_sidebar_state="expanded"
+    layout="wide"
 )
 
-# Custom CSS untuk tampilan lebih profesional
-st.markdown("""
-<style>
-    .metric-card {
-        background-color: #f0f2f6;
-        border-radius: 10px;
-        padding: 20px;
-        text-align: center;
-        box-shadow: 2px 2px 5px rgba(0,0,0,0.1);
-    }
-    .stTabs [data-baseweb="tab-list"] {
-        gap: 10px;
-    }
-    .stTabs [data-baseweb="tab"] {
-        height: 50px;
-        white-space: pre-wrap;
-        background-color: #ffffff;
-        border-radius: 4px 4px 0px 0px;
-        box-shadow: 0px 1px 2px rgba(0,0,0,0.1);
-    }
-    .stTabs [aria-selected="true"] {
-        background-color: #e6f3ff;
-        border-bottom: 2px solid #0068c9;
-    }
-</style>
-""", unsafe_allow_html=True)
-
-# ==========================================
-# 2. DATA LOADING & PROCESSING (CACHED)
-# ==========================================
+# --- FUNGSI UTAMA LOAD DATA ---
 @st.cache_data
 def load_data():
+    """Membaca file CSV yang diunggah."""
     try:
-        file_path = 'Coffe_sales.csv'
-        df = pd.read_csv(file_path)
-        df.drop_duplicates(inplace=True)
-
-        # Robust Date Parsing
-        raw_datetime = df['Date'] + ' ' + df['Time']
-        df['datetime'] = pd.to_datetime(raw_datetime, format="%Y-%m-%d %H:%M:%S.%f", errors='coerce')
-        mask_nat = df['datetime'].isna()
-        df.loc[mask_nat, 'datetime'] = pd.to_datetime(raw_datetime[mask_nat], format="%Y-%m-%d %H:%M:%S", errors='coerce')
-        
-        df.drop(columns=['Date', 'Time'], inplace=True)
-        df['period'] = df['datetime'].dt.to_period('M')
+        # Menggunakan nama file yang sudah Anda unggah
+        df = pd.read_csv('Coffe_sales.csv') 
         return df
     except FileNotFoundError:
+        st.error("File 'Coffe_sales.csv' tidak ditemukan. Pastikan file ada di folder yang sama.")
         return None
 
-df = load_data()
+df_raw = load_data()
 
-# ==========================================
-# 3. SIDEBAR & NAVIGASI
-# ==========================================
-with st.sidebar:
-    st.title("☕ Business Intelligence")
-    st.info("**Client:** Coffee Shop Executive\n\n**Goal:** Ops & Marketing Optimization")
-    
-    st.markdown("---")
-    st.write("Filter Global:")
-    
-    if df is not None:
-        # Filter Bulan (Opsional, untuk demo kita gunakan semua data)
-        selected_payment = st.multiselect(
-            "Metode Pembayaran", 
-            options=df['cash_type'].unique(),
-            default=df['cash_type'].unique()
-        )
-        
-        # Terapkan filter ke dataframe utama
-        df_filtered = df[df['cash_type'].isin(selected_payment)]
+# --- FUNGSI DATA PREPARATION (LOGIKA IPYNB) ---
+def run_data_preparation(df_raw):
+    """Menerapkan logika agregasi, feature engineering, dan encoding dari Jupyter Notebook."""
+    df = df_raw.copy()
+    if 'Date' in df.columns:
+        df['Date'] = pd.to_datetime(df['Date'])
     else:
-        st.error("File 'Coffe_sales.csv' tidak ditemukan.")
-        st.stop()
+        st.error("Kolom 'Date' tidak ditemukan.")
+        return None, None, None
 
-# ==========================================
-# 4. MAIN DASHBOARD CONTENT
-# ==========================================
-st.title("📊 Laporan Kinerja & Strategi Bisnis")
-st.markdown("Dashboard ini memberikan wawasan berbasis data untuk **Optimalisasi Inventaris** dan **Segmentasi Pelanggan**.")
+    # 1. Agregasi Data
+    df_agg = df.groupby(['Date', 'hour_of_day']).size().reset_index(name='order_count')
+    
+    # 2. Menentukan Threshold Peak Hour (Quantil 75%)
+    threshold = df_agg['order_count'].quantile(0.75)
+    
+    # 3. Membuat Label Binary (Target Y)
+    df_agg['is_peak_hour'] = (df_agg['order_count'] > threshold).astype(int)
+    
+    # 4. Ekstrak fitur tambahan
+    df_agg['day_name'] = df_agg['Date'].dt.day_name()
+    df_agg['month'] = df_agg['Date'].dt.month
+    
+    # 5. Encoding Day
+    le = LabelEncoder()
+    df_agg['day_code'] = le.fit_transform(df_agg['day_name']) 
+    
+    return df_agg, le, threshold
 
-# Tabs untuk memisahkan topik
-tab1, tab2, tab3 = st.tabs(["📈 Executive Overview", "📦 Inventory Intelligence", "🎯 Marketing Strategy"])
+# Jika data mentah berhasil dimuat, jalankan preprocessing
+if df_raw is not None:
+    df_agg, le, threshold = run_data_preparation(df_raw)
+    st.session_state['data_ready'] = df_agg
+    st.session_state['encoder'] = le
+    st.session_state['threshold'] = threshold
 
-# --- TAB 1: EXECUTIVE OVERVIEW ---
-with tab1:
-    st.subheader("Ringkasan Kinerja Bisnis")
+# --- SIDEBAR NAVIGASI ---
+st.sidebar.title("Navigasi Proyek UAS")
+st.sidebar.info("Nama Kelompok:\n1. Akmal Danendra Maulana\n2. Danang Adiwibibowo\n3. Hafiz Alaudin Rasendriya")
+menu = st.sidebar.radio(
+    "Pilih Tahapan CRISP-DM:", 
+    ["1. Business & Data Understanding", "2. EDA (Exploratory Data Analysis)", "3. Data Preparation", "4. Modelling & Evaluation (Random Forest)", "5. Deployment (Prediksi)"]
+)
+
+# --------------------------------------------------------------------------------------------------
+# HALAMAN 1: BUSINESS & DATA UNDERSTANDING
+if menu == "1. Business & Data Understanding":
+    st.title("☕ Analisis & Prediksi Peak Hours Kedai Kopi")
     
-    # KPIs
-    col1, col2, col3, col4 = st.columns(4)
-    total_sales = df_filtered['money'].sum()
-    total_trx = len(df_filtered)
-    avg_ticket = df_filtered['money'].mean()
-    top_product = df_filtered['coffee_name'].mode()[0]
-    
-    col1.metric("Total Revenue", f"${total_sales:,.2f}")
-    col2.metric("Total Transaksi", f"{total_trx:,}")
-    col3.metric("Rata-rata Order", f"${avg_ticket:.2f}")
-    col4.metric("Produk Terlaris", top_product)
-    
-    st.markdown("---")
-    
-    # Chart: Tren Penjualan & Top Produk
-    c1, c2 = st.columns(2)
-    
-    with c1:
-        st.markdown("**Tren Penjualan Harian (Volume)**")
-        daily_trend = df_filtered.groupby(df_filtered['datetime'].dt.date).size()
-        st.line_chart(daily_trend)
+    st.header("Business Understanding")
+    st.write("""
+    **Tujuan Bisnis:** Memprediksi apakah suatu jam akan menjadi **Peak Hour (Jam Sibuk)** atau **Normal Hour** untuk optimasi staf, stok, dan alokasi sumber daya.
+    """)
+
+    st.header("Data Understanding")
+    if df_raw is not None:
+        st.write("Dataset Awal (`Coffe_sales.csv`):")
+        st.dataframe(df_raw.head())
+        st.write(f"**Dimensi Data:** {df_raw.shape[0]} Baris, {df_raw.shape[1]} Kolom")
         
-    with c2:
-        st.markdown("**Top 5 Produk (Berdasarkan Pendapatan)**")
-        top_products = df_filtered.groupby('coffee_name')['money'].sum().nlargest(5).sort_values()
-        fig, ax = plt.subplots(figsize=(5,3))
-        top_products.plot(kind='barh', ax=ax, color='#4e342e')
-        ax.set_ylabel("")
+        st.subheader("Fitur Utama yang Digunakan Model")
+        st.markdown("""
+        * **Fitur X (Prediktor):** `hour_of_day`, `day_code`, `month`
+        * **Fitur Y (Target):** `is_peak_hour` (0=Normal, 1=Peak)
+        """)
+    else:
+        st.error("Data tidak ditemukan.")
+
+# --------------------------------------------------------------------------------------------------
+# HALAMAN 2: EDA
+elif menu == "2. EDA (Exploratory Data Analysis)":
+    st.title("🔍 Exploratory Data Analysis (EDA)")
+    
+    if df_raw is not None:
+        
+        # 1. Distribusi Transaksi per Jam
+        st.subheader("1. Distribusi Jumlah Transaksi Berdasarkan Jam Operasional")
+        fig, ax = plt.subplots(figsize=(10, 6))
+        sns.histplot(data=df_raw, x='hour_of_day', bins=16, kde=True, color='skyblue', ax=ax)
+        ax.set_xlabel('Jam Transaksi (Hour of Day)')
+        ax.set_ylabel('Jumlah Transaksi')
+        ax.grid(axis='y', linestyle='--')
         st.pyplot(fig)
 
-# --- TAB 2: INVENTORY INTELLIGENCE (Forecasting) ---
-with tab2:
-    st.header("Optimalisasi Inventaris Cerdas")
-    st.markdown("Gunakan modul ini untuk memprediksi kebutuhan stok bulan depan dan menghindari *stockout*.")
+        # 2. Top 10 Menu Kopi
+        st.subheader("2. Top 10 Jenis Kopi dengan Transaksi Terbanyak")
+        top_products = df_raw['coffee_name'].value_counts().head(10)
+        fig2, ax2 = plt.subplots(figsize=(10, 6))
+        sns.barplot(x=top_products.values, y=top_products.index, palette='viridis', ax=ax2)
+        ax2.set_xlabel('Jumlah Transaksi')
+        ax2.set_ylabel('Nama Produk')
+        st.pyplot(fig2)
+
+        # 3. Heatmap Harian vs Jam
+        st.subheader("3. Heatmap Kepadatan Transaksi (Hari vs Jam)")
+        
+        # Menggunakan day_name dari data agregasi
+        df_heatmap_hourly = st.session_state['data_ready'].groupby(['day_name', 'hour_of_day']).size().unstack(fill_value=0)
+        
+        fig3, ax3 = plt.subplots(figsize=(12, 6))
+        sns.heatmap(df_heatmap_hourly, cmap='YlGnBu', annot=True, fmt='d', linewidths=.5, linecolor='black', ax=ax3)
+        ax3.set_title('Kepadatan Transaksi Berdasarkan Hari dan Jam')
+        ax3.set_ylabel('Hari')
+        ax3.set_xlabel('Jam')
+        st.pyplot(fig3)
+
+# --------------------------------------------------------------------------------------------------
+# HALAMAN 3: DATA PREPARATION
+elif menu == "3. Data Preparation":
+    st.title("⚙️ Data Preparation")
     
-    # User Input
-    col_input, col_res = st.columns([1, 3])
-    
-    with col_input:
-        selected_product = st.selectbox("Pilih Produk untuk Analisis:", df['coffee_name'].unique(), index=0)
-        st.caption("Analisis dilakukan menggunakan model SMA (Moving Average) dan Linear Trend.")
-    
-    # --- Backend Logic untuk Forecasting ---
-    product_data = df[df['coffee_name'] == selected_product].copy()
-    monthly_sales = product_data.groupby('period').size().reset_index(name='actual_sales')
-    monthly_sales['period_str'] = monthly_sales['period'].astype(str)
-    monthly_sales['time_idx'] = np.arange(len(monthly_sales))
-    
-    # Train/Test Split
-    train_size = max(len(monthly_sales) - 3, 1)
-    train = monthly_sales.iloc[:train_size]
-    test = monthly_sales.iloc[train_size:]
-    
-    # Modeling
-    # 1. SMA
-    monthly_sales['sma_forecast'] = monthly_sales['actual_sales'].rolling(window=3).mean().shift(1)
-    
-    # 2. Linear Regression
-    if len(train) > 1:
-        lr = LinearRegression()
-        lr.fit(train[['time_idx']], train['actual_sales'])
-        monthly_sales['trend_forecast'] = lr.predict(monthly_sales[['time_idx']])
+    if 'data_ready' in st.session_state:
+        df = st.session_state['data_ready']
+        
+        st.subheader("1. Transformasi Data dan Pembuatan Target")
+        st.write("Data transaksi diubah menjadi data teragregasi per-jam untuk menentukan keramaian.")
+        
+        st.info(f"**Threshold Peak Hour:** Lebih dari **{int(st.session_state['threshold'])}** order/jam dikategorikan 'Peak Hour' (1).")
+        
+        st.dataframe(df[['Date', 'hour_of_day', 'order_count', 'is_peak_hour', 'day_name', 'day_code']].head())
+
+        st.subheader("2. Korelasi Fitur (Siapa yang paling ngaruh ke Peak Hour?)")
+        # Visualisasi Korelasi
+        fig_corr, ax_corr = plt.subplots(figsize=(8, 6))
+        sns.heatmap(df[['hour_of_day', 'month', 'day_code', 'is_peak_hour']].corr(), 
+                    annot=True, 
+                    cmap='coolwarm', 
+                    fmt=".2f",
+                    ax=ax_corr)
+        ax_corr.set_title('Korelasi Antar Variabel')
+        st.pyplot(fig_corr)
+        st.markdown("**Insight:** Variabel dengan nilai absolut (tanpa minus) tertinggi terhadap `is_peak_hour` adalah fitur yang paling penting bagi model.")
     else:
-        monthly_sales['trend_forecast'] = np.nan
-        lr = None
+        st.error("Data mentah tidak tersedia.")
 
-    # Evaluasi & Rekomendasi
-    if len(test) > 0:
-        rmse_sma = np.sqrt(mean_squared_error(test['actual_sales'], monthly_sales.loc[test.index, 'sma_forecast'].fillna(0)))
-        rmse_trend = np.sqrt(mean_squared_error(test['actual_sales'], monthly_sales.loc[test.index, 'trend_forecast'].fillna(0))) if lr else 999
+# --------------------------------------------------------------------------------------------------
+# HALAMAN 4: MODELLING & EVALUATION (PERBAIKAN SKALA DAN KONSISTENSI RANDOM STATE)
+elif menu == "4. Modelling & Evaluation (Random Forest)":
+    st.title("🤖 Modelling & Evaluation: Random Forest Classifier")
+
+    if 'data_ready' in st.session_state:
+        df = st.session_state['data_ready']
         
-        best_model = "SMA (Moving Average)" if rmse_sma < rmse_trend else "Linear Trend"
-        best_rmse = min(rmse_sma, rmse_trend)
+        # Definisi Fitur (X) dan Target (y)
+        X = df[['hour_of_day', 'day_code', 'month']]
+        y = df['is_peak_hour']
         
-        # Forecast Bulan Depan
-        if best_model.startswith("SMA"):
-            next_forecast = monthly_sales['actual_sales'].iloc[-3:].mean()
-        else:
-            next_forecast = lr.predict([[monthly_sales['time_idx'].max() + 1]])[0]
+        # Split Data (Menggunakan slider Data Training dan RANDOM_STATE=42)
+        st.subheader("1. Splitting Data (Stratified Split)")
+        split_train_percent = st.slider("Rasio Data Training (%)", 60, 90, 80)
+        test_size_ratio = (100 - split_train_percent) / 100
+        
+        X_train, X_test, y_train, y_test = train_test_split(
+            X, y, 
+            test_size=test_size_ratio, 
+            random_state=GLOBAL_RANDOM_STATE, 
+            stratify=y
+        )
+        st.info(f"Data Training: {len(X_train)} ({split_train_percent}%) | Data Testing: {len(X_test)} ({(100-split_train_percent)}%)")
+
+        # 2. SCALING DATA (StandardScaler) - Ditambahkan untuk konsistensi dengan IPYNB
+        st.subheader("2. Scaling Data (StandardScaler)")
+        scaler = StandardScaler()
+        X_train_scaled = scaler.fit_transform(X_train)
+        X_test_scaled = scaler.transform(X_test)
+        
+        # Konversi kembali ke DataFrame untuk menjaga nama kolom
+        X_train_scaled_df = pd.DataFrame(X_train_scaled, columns=X.columns)
+        X_test_scaled_df = pd.DataFrame(X_test_scaled, columns=X.columns)
+        
+        st.write("Data fitur sudah di-scale.")
+
+        # 3. Model Training (Random Forest)
+        st.subheader("3. Model Training: Random Forest Classifier")
+        
+        n_estimators = st.slider("Jumlah Pohon (n_estimators)", 10, 200, 100)
+        
+        # class_weight='balanced' dan RANDOM_STATE=42 konsisten
+        model = RandomForestClassifier(
+            n_estimators=n_estimators, 
+            random_state=GLOBAL_RANDOM_STATE, 
+            class_weight='balanced'
+        )
+        
+        # Model dilatih pada data yang sudah di-scale
+        model.fit(X_train_scaled_df, y_train)
+        
+        # Simpan model
+        st.session_state['model'] = model
+
+        # Evaluation
+        st.subheader("4. Evaluation Metrics")
+        
+        # Prediksi menggunakan data yang sudah di-scale
+        y_pred = model.predict(X_test_scaled_df) 
+        
+        # Metrics
+        acc = accuracy_score(y_test, y_pred)
+        st.metric("Akurasi Model", f"{acc:.2%}")
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            st.text("Classification Report:")
+            report = classification_report(y_test, y_pred, output_dict=True)
+            st.dataframe(pd.DataFrame(report).transpose()) 
+        
+        with col2:
+            st.text("Confusion Matrix:")
+            cm = confusion_matrix(y_test, y_pred)
+            fig, ax = plt.subplots()
+            # CONFUSION MATRIX DISAMAKAN
+            sns.heatmap(cm, annot=True, fmt='d', cmap='Greens', ax=ax)
+            ax.set_title('Confusion Matrix - Random Forest')
+            ax.set_xlabel('Predicted')
+            ax.set_ylabel('Actual')
+            st.pyplot(fig)
             
-        safety_stock = 1.65 * best_rmse
-        total_rec = next_forecast + safety_stock
+        # 5. Feature Importance (DISAMAKAN PERSIS)
+        st.subheader("5. Feature Importance")
+        
+        importances = model.feature_importances_
+        feature_names = X.columns 
+
+        feature_importance_df = pd.DataFrame({
+            'Feature': feature_names,
+            'Importance Score': importances
+        })
+
+        feature_importance_df = feature_importance_df.sort_values(
+            by='Importance Score', ascending=False
+        ).reset_index(drop=True)
+
+        st.dataframe(feature_importance_df)
+
+        fig_feat, ax_feat = plt.subplots(figsize=(8, 4))
+        sns.barplot(x='Importance Score', y='Feature', data=feature_importance_df, palette='viridis', ax=ax_feat)
+        ax_feat.set_title('Kontribusi Fitur ke Peak Hour')
+        st.pyplot(fig_feat)
+
     else:
-        # Fallback jika data terlalu sedikit
-        next_forecast = monthly_sales['actual_sales'].mean()
-        safety_stock = 0
-        total_rec = next_forecast
-        best_model = "Average (Insufficient Data)"
-        best_rmse = 0
+        st.warning("Data belum diproses. Kembali ke menu '3. Data Preparation'!")
 
-    # --- Display Result ---
-    with col_res:
-        # Kartu Rekomendasi (Highlight)
-        st.success(f"### 📦 Rekomendasi Restock: **{int(total_rec)} Cup**")
+# --------------------------------------------------------------------------------------------------
+# HALAMAN 5: DEPLOYMENT
+elif menu == "5. Deployment (Prediksi)":
+    st.title("🚀 Deployment: Prediksi Peak Hour")
+
+    if 'model' in st.session_state and 'encoder' in st.session_state:
+        model = st.session_state['model']
+        le = st.session_state['encoder']
         
-        m1, m2, m3 = st.columns(3)
-        m1.metric("Prediksi Dasar", f"{int(next_forecast)} Cup")
-        m2.metric("Safety Stock (Buffer)", f"{int(safety_stock)} Cup", help="Cadangan untuk antisipasi lonjakan permintaan (95% Service Level)")
-        m3.metric("Model Akurasi Terbaik", best_model, delta=f"Error +/- {best_rmse:.1f}")
-
-        # Visualisasi
-        st.subheader("Grafik Peramalan & Realisasi")
-        fig_forecast, ax_f = plt.subplots(figsize=(10, 4))
-        ax_f.plot(monthly_sales['period_str'], monthly_sales['actual_sales'], marker='o', label='Aktual', linewidth=2)
-        ax_f.plot(monthly_sales['period_str'], monthly_sales['sma_forecast'], '--', label='Prediksi SMA', color='orange')
-        if lr:
-            ax_f.plot(monthly_sales['period_str'], monthly_sales['trend_forecast'], ':', label='Prediksi Trend', color='green')
-        
-        ax_f.axvline(x=train_size - 0.5, color='gray', linestyle='--', alpha=0.5, label='Batas Data Training')
-        ax_f.legend()
-        ax_f.set_xlabel("Bulan")
-        ax_f.set_ylabel("Volume Penjualan")
-        plt.xticks(rotation=45)
-        st.pyplot(fig_forecast)
-
-# --- TAB 3: MARKETING STRATEGY (Segmentation) ---
-with tab3:
-    st.header("Strategi Promosi & Segmentasi Produk")
-    st.markdown("Analisis ini mengelompokkan produk berdasarkan **Harga vs Popularitas** untuk menentukan strategi promosi yang tepat.")
-    
-    # 1. Clustering Data Prep
-    prod_features = df.groupby('coffee_name').agg({
-        'money': 'mean',
-        'datetime': 'count'
-    }).reset_index().rename(columns={'money': 'Avg_Price', 'datetime': 'Total_Transactions'})
-    
-    scaler = StandardScaler()
-    X_scaled = scaler.fit_transform(prod_features[['Avg_Price', 'Total_Transactions']])
-    
-    kmeans = KMeans(n_clusters=3, random_state=42, n_init=10)
-    prod_features['Cluster'] = kmeans.fit_predict(X_scaled)
-    
-    # Logic Penamaan Label Otomatis
-    avg_trans = prod_features['Total_Transactions'].mean()
-    avg_price = prod_features['Avg_Price'].mean()
-    
-    def get_label(row):
-        if row['Total_Transactions'] > avg_trans:
-            return "Star Product (Laris)" if row['Avg_Price'] > avg_price else "Cash Cow (Volume Maker)"
-        else:
-            return "Premium Niche (Mahal)" if row['Avg_Price'] > avg_price else "Slow Mover (Perlu Promo)"
+        with st.form("prediction_form"):
+            st.subheader("Masukkan Parameter Waktu (Input untuk Prediksi)")
             
-    prod_features['Segment'] = prod_features.apply(get_label, axis=1)
-
-    col_strat1, col_strat2 = st.columns([2, 1])
-
-    with col_strat1:
-        st.subheader("Peta Segmentasi Produk")
-        fig_seg, ax_s = plt.subplots(figsize=(8, 5))
-        sns.scatterplot(data=prod_features, x='Total_Transactions', y='Avg_Price', hue='Segment', s=200, style='Segment', palette='viridis', ax=ax_s)
-        
-        # Anotasi
-        for i in range(prod_features.shape[0]):
-            ax_s.text(prod_features.Total_Transactions[i]+2, prod_features.Avg_Price[i], 
-                      prod_features.coffee_name[i], fontsize=8)
+            col1, col2 = st.columns(2)
+            with col1:
+                input_hour = st.slider("Pilih Jam Operasional:", 6, 22, 12)
+            with col2:
+                days_list = le.classes_
+                input_day = st.selectbox("Pilih Hari:", days_list)
             
-        ax_s.set_xlabel("Popularitas (Jumlah Transaksi)")
-        ax_s.set_ylabel("Harga Rata-rata ($)")
-        st.pyplot(fig_seg)
-        
-    with col_strat2:
-        st.subheader("Rekomendasi Strategi")
-        st.info("**Star Products:** Pertahankan stok, hindari diskon.")
-        st.success("**Cash Cows:** Buat bundling dengan Slow Movers.")
-        st.warning("**Slow Movers:** Berikan diskon agresif / Flash Sale.")
+            input_month = st.selectbox("Bulan:", range(1, 13), index=2) 
+            
+            submit = st.form_submit_button("Prediksi Keramaian")
+            
+            if submit:
+                # Preprocess input
+                day_encoded = le.transform([input_day])[0]
+                input_data_unscaled = pd.DataFrame({
+                    'hour_of_day': [input_hour],
+                    'day_code': [day_encoded],
+                    'month': [input_month]
+                })
+                
+                # Input harus di-scale sebelum diprediksi (sesuai pipeline training)
+                # Ambil scaler dari training (asumsi scaler disimpan saat training)
+                if 'scaler' not in st.session_state:
+                    # Latih scaler dengan data train yang sudah ada
+                    X_dummy = st.session_state['data_ready'][['hour_of_day', 'day_code', 'month']]
+                    X_train_dummy, _, _, _ = train_test_split(X_dummy, st.session_state['data_ready']['is_peak_hour'], test_size=0.2, random_state=GLOBAL_RANDOM_STATE, stratify=st.session_state['data_ready']['is_peak_hour'])
+                    scaler = StandardScaler()
+                    scaler.fit(X_train_dummy)
+                    st.session_state['scaler'] = scaler # Simpan scaler
+                else:
+                    scaler = st.session_state['scaler']
 
-    st.markdown("---")
-    st.subheader("🕒 Kapan Waktu Terbaik untuk Promo?")
-    
-    # Heatmap
-    heatmap_data = pd.crosstab(df['coffee_name'], df['Time_of_Day'])
-    heatmap_norm = heatmap_data.div(heatmap_data.sum(axis=1), axis=0)
-    
-    fig_heat, ax_h = plt.subplots(figsize=(10, 4))
-    sns.heatmap(heatmap_norm, annot=True, fmt=".0%", cmap="YlGnBu", ax=ax_h)
-    ax_h.set_title("Proporsi Penjualan per Waktu (Heatmap)")
-    st.pyplot(fig_heat)
-    st.caption("*Angka menunjukkan persentase penjualan produk tersebut terjadi pada waktu tertentu.*")
+                input_data_scaled = scaler.transform(input_data_unscaled)
+                
+                # Prediksi
+                prediction = model.predict(input_data_scaled)[0]
+                prob = model.predict_proba(input_data_scaled)[0][1] # Probabilitas Peak Hour (Kelas 1)
+                
+                st.divider()
+                if prediction == 1:
+                    st.error(f"🔥 **HASIL PREDIKSI: PEAK HOUR (RAMAI)!**")
+                    st.write(f"Tingkat Keyakinan Ramai: **{prob:.2%}**")
+                    st.markdown("⚠️ **REKOMENDASI:** Tambah staf, siapkan stok kopi lebih banyak.")
+                else:
+                    st.success(f"✅ **HASIL PREDIKSI: NORMAL HOUR (SEPI)**")
+                    st.write(f"Tingkat Keyakinan Ramai: **{prob:.2%}**")
+                    st.markdown("👍 **REKOMENDASI:** Aman, bisa gunakan waktu untuk *cleaning* atau *training* staf.")
+    else:
+        st.warning("Model belum dilatih. Silakan ke menu '4. Modelling & Evaluation' terlebih dahulu.")
