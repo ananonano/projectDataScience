@@ -8,8 +8,6 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import classification_report, confusion_matrix, accuracy_score
 from sklearn.preprocessing import LabelEncoder, StandardScaler # Import StandardScaler
 
-# --- KONFIGURASI HALAMAN ---
-# Menggunakan random_state yang konsisten (42) agar hasil reproducible
 GLOBAL_RANDOM_STATE = 42
 
 st.set_page_config(
@@ -18,12 +16,10 @@ st.set_page_config(
     layout="wide"
 )
 
-# --- FUNGSI UTAMA LOAD DATA ---
 @st.cache_data
 def load_data():
     """Membaca file CSV yang diunggah."""
     try:
-        # Menggunakan nama file yang sudah Anda unggah
         df = pd.read_csv('Coffe_sales.csv') 
         return df
     except FileNotFoundError:
@@ -32,7 +28,6 @@ def load_data():
 
 df_raw = load_data()
 
-# --- FUNGSI DATA PREPARATION (LOGIKA IPYNB) ---
 def run_data_preparation(df_raw):
     """Menerapkan logika agregasi, feature engineering, dan encoding dari Jupyter Notebook."""
     df = df_raw.copy()
@@ -61,7 +56,6 @@ def run_data_preparation(df_raw):
     
     return df_agg, le, threshold
 
-# Jika data mentah berhasil dimuat, jalankan preprocessing
 if df_raw is not None:
     df_agg, le, threshold = run_data_preparation(df_raw)
     st.session_state['data_ready'] = df_agg
@@ -76,8 +70,6 @@ menu = st.sidebar.radio(
     ["1. Business & Data Understanding", "2. EDA (Exploratory Data Analysis)", "3. Data Preparation", "4. Modelling & Evaluation (Random Forest)", "5. Deployment (Prediksi)"]
 )
 
-# --------------------------------------------------------------------------------------------------
-# HALAMAN 1: BUSINESS & DATA UNDERSTANDING
 if menu == "1. Business & Data Understanding":
     st.title("☕ Analisis & Prediksi Peak Hours Kedai Kopi")
     
@@ -100,8 +92,6 @@ if menu == "1. Business & Data Understanding":
     else:
         st.error("Data tidak ditemukan.")
 
-# --------------------------------------------------------------------------------------------------
-# HALAMAN 2: EDA
 elif menu == "2. EDA (Exploratory Data Analysis)":
     st.title("🔍 Exploratory Data Analysis (EDA)")
     
@@ -138,8 +128,6 @@ elif menu == "2. EDA (Exploratory Data Analysis)":
         ax3.set_xlabel('Jam')
         st.pyplot(fig3)
 
-# --------------------------------------------------------------------------------------------------
-# HALAMAN 3: DATA PREPARATION
 elif menu == "3. Data Preparation":
     st.title("⚙️ Data Preparation")
     
@@ -167,8 +155,6 @@ elif menu == "3. Data Preparation":
     else:
         st.error("Data mentah tidak tersedia.")
 
-# --------------------------------------------------------------------------------------------------
-# HALAMAN 4: MODELLING & EVALUATION (PERBAIKAN SKALA DAN KONSISTENSI RANDOM STATE)
 elif menu == "4. Modelling & Evaluation (Random Forest)":
     st.title("🤖 Modelling & Evaluation: Random Forest Classifier")
 
@@ -274,8 +260,7 @@ elif menu == "4. Modelling & Evaluation (Random Forest)":
     else:
         st.warning("Data belum diproses. Kembali ke menu '3. Data Preparation'!")
 
-# --------------------------------------------------------------------------------------------------
-# HALAMAN 5: DEPLOYMENT
+
 elif menu == "5. Deployment (Prediksi)":
     st.title("🚀 Deployment: Prediksi Peak Hour")
 
