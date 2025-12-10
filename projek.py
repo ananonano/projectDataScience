@@ -5,9 +5,9 @@ import seaborn as sns
 import matplotlib.pyplot as plt
 import joblib
 
-# Konfigurasi Halaman
 st.set_page_config(
     page_title="Coffee Shop Analytics",
+    page_icon="☕",
     layout="wide"
 )
 
@@ -95,8 +95,8 @@ if menu == "Dashboard Insight":
 
 
 # HALAMAN 2: PREDIKSI (DEPLOYMENT)
-elif menu == "🔮 Prediksi Peak Hour":
-    st.title("🤖 Prediksi Kepadatan Toko")
+elif menu == "Prediksi Peak Hour":
+    st.title("Prediksi Kepadatan Toko")
     st.markdown("Masukkan waktu operasional untuk memprediksi apakah toko akan **Ramai (Peak Hour)** atau **Normal**.")
 
     with st.form("prediksi_form"):
